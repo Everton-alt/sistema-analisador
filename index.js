@@ -13,7 +13,7 @@ const pool = new Pool({
 });
 
 // CHAVE DE SEGURANÇA ADM
-const CHAVE_ADM = 'Henrique2026';
+const CHAVE_ADM = 'Everton2026';
 
 // 1. ROTA DE VALIDAÇÃO (LOGIN)
 app.post('/validar', async (req, res) => {
