@@ -21,7 +21,13 @@ app.post('/webhook-pagamento', async (req, res) => {
     console.log(`Evento recebido do Asaas: ${event}`);
 
     if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED' || event === 'PAYMENT_SETTLED') {
-        const emailCliente = payment.customerEmail ? payment.customerEmail.toLowerCase().trim() : null;
+        
+        // Tenta capturar o e-mail de várias formas para garantir que não venha nulo
+        let emailBruto = payment.customerEmail || 
+                         (payment.customer ? payment.customer.email : null) || 
+                         payment.email;
+
+        const emailCliente = emailBruto ? emailBruto.toLowerCase().trim() : null;
         
         if (emailCliente) {
             try {
@@ -37,8 +43,10 @@ app.post('/webhook-pagamento', async (req, res) => {
                 );
                 console.log(`✅ Acesso liberado automaticamente via Webhook: ${emailCliente}`);
             } catch (err) {
-                console.error("❌ Erro no banco via webhook:", err);
+                console.error("❌ Erro no banco via webhook:", err.message);
             }
+        } else {
+            console.error("⚠️ Webhook recebido, mas o e-mail do cliente não foi encontrado no JSON.");
         }
     }
     res.status(200).send('OK');
@@ -64,7 +72,7 @@ app.post('/adicionar-usuario', async (req, res) => {
         );
         res.json({ msg: `✅ Usuário ${email} cadastrado/atualizado com sucesso!` });
     } catch (err) {
-        console.error(err);
+        console.error(err.message);
         res.status(500).json({ erro: "Erro ao salvar usuário no banco." });
     }
 });
@@ -81,10 +89,10 @@ app.post('/excluir-usuario', async (req, res) => {
         if (result.rowCount > 0) {
             res.json({ msg: `❌ Usuário ${email} removido com sucesso!` });
         } else {
-            res.status(404).json({ erro: "Usuário não encontrado na base de dados." });
+            res.status(404).json({ erro: "Usuário não encontrado." });
         }
     } catch (err) {
-        console.error(err);
+        console.error(err.message);
         res.status(500).json({ erro: "Erro ao excluir usuário." });
     }
 });
@@ -113,7 +121,7 @@ app.post('/validar', async (req, res) => {
       res.json({ autorizado: false, msg: "Assinatura vencida ou inativa" });
     }
   } catch (err) { 
-    console.error(err);
+    console.error(err.message);
     res.status(500).json({ erro: "Erro interno no servidor" }); 
   }
 });
@@ -126,14 +134,13 @@ app.get('/obter-base', async (req, res) => {
   } catch (err) { res.status(500).json({ erro: "Erro ao buscar base" }); }
 });
 
-// --- ROTA PARA IMPORTAR EXCEL (REFORÇADA CONTRA ERROS SQL) ---
+// --- ROTA PARA IMPORTAR EXCEL ---
 app.post('/importar-base', async (req, res) => {
   const { jogos, senha } = req.body;
   
   if (senha !== CHAVE_ADM) return res.status(401).json({ erro: "Senha ADM incorreta" });
 
   try {
-    // Limpa a tabela e reinicia o contador de IDs
     await pool.query('TRUNCATE TABLE base_jogos RESTART IDENTITY');
     
     const queryText = `
@@ -142,18 +149,19 @@ app.post('/importar-base', async (req, res) => {
     `;
 
     for (const jogo of jogos) {
-      // Pula linhas que não tenham os dados básicos
       if (!jogo['Casa'] || !jogo['Visitante']) continue;
 
-      // Tratamento para converter vírgulas em pontos e garantir que sejam números
       const limparNum = (val) => {
           if (typeof val === 'string') return parseFloat(val.replace(',', '.')) || 0;
           return parseFloat(val) || 0;
       };
 
+      // Remove aspas simples para não quebrar o SQL
+      const limparTexto = (txt) => String(txt).replace(/'/g, " ").trim();
+
       const valores = [
-        String(jogo['Casa']).trim(),
-        String(jogo['Visitante']).trim(),
+        limparTexto(jogo['Casa']),
+        limparTexto(jogo['Visitante']),
         parseInt(jogo['Placar Casa']) || 0,
         parseInt(jogo['Placar Visitante']) || 0,
         limparNum(jogo['Prob, Casa (1)']),
@@ -166,7 +174,7 @@ app.post('/importar-base', async (req, res) => {
     res.json({ msg: "🚀 Base importada com sucesso!" });
   } catch (err) { 
     console.error("Erro SQL Detalhado:", err.message);
-    res.status(500).json({ erro: "Erro ao salvar no banco. Verifique se o Excel segue o padrão das colunas." }); 
+    res.status(500).json({ erro: "Erro ao salvar no banco. Verifique o padrão das colunas." }); 
   }
 });
 
