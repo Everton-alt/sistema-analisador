@@ -48,10 +48,7 @@ app.post('/webhook-pagamento', async (req, res) => {
 app.post('/adicionar-usuario', async (req, res) => {
     const { email, senha, dias } = req.body;
 
-    if (senha !== CHAVE_ADM) {
-        return res.status(401).json({ erro: "Senha ADM incorreta" });
-    }
-
+    if (senha !== CHAVE_ADM) return res.status(401).json({ erro: "Senha ADM incorreta" });
     if (!email) return res.status(400).json({ erro: "E-mail necessário" });
 
     try {
@@ -76,15 +73,11 @@ app.post('/adicionar-usuario', async (req, res) => {
 app.post('/excluir-usuario', async (req, res) => {
     const { email, senha } = req.body;
 
-    if (senha !== CHAVE_ADM) {
-        return res.status(401).json({ erro: "Senha ADM incorreta" });
-    }
-
+    if (senha !== CHAVE_ADM) return res.status(401).json({ erro: "Senha ADM incorreta" });
     if (!email) return res.status(400).json({ erro: "E-mail necessário para exclusão" });
 
     try {
         const result = await pool.query('DELETE FROM usuarios WHERE LOWER(email) = LOWER($1)', [email.trim()]);
-        
         if (result.rowCount > 0) {
             res.json({ msg: `❌ Usuário ${email} removido com sucesso!` });
         } else {
@@ -92,7 +85,7 @@ app.post('/excluir-usuario', async (req, res) => {
         }
     } catch (err) {
         console.error(err);
-        res.status(500).json({ erro: "Erro ao excluir usuário do banco." });
+        res.status(500).json({ erro: "Erro ao excluir usuário." });
     }
 });
 
@@ -133,36 +126,47 @@ app.get('/obter-base', async (req, res) => {
   } catch (err) { res.status(500).json({ erro: "Erro ao buscar base" }); }
 });
 
-// --- ROTA PARA IMPORTAR EXCEL (COM SENHA ADM) ---
+// --- ROTA PARA IMPORTAR EXCEL (REFORÇADA CONTRA ERROS SQL) ---
 app.post('/importar-base', async (req, res) => {
   const { jogos, senha } = req.body;
   
-  if (senha !== CHAVE_ADM) {
-      return res.status(401).json({ erro: "Senha ADM incorreta" });
-  }
+  if (senha !== CHAVE_ADM) return res.status(401).json({ erro: "Senha ADM incorreta" });
 
   try {
-    await pool.query('DELETE FROM base_jogos');
+    // Limpa a tabela e reinicia o contador de IDs
+    await pool.query('TRUNCATE TABLE base_jogos RESTART IDENTITY');
     
+    const queryText = `
+      INSERT INTO base_jogos (casa, visitante, placar_casa, placar_visitante, prob_casa, prob_empate, prob_fora) 
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `;
+
     for (const jogo of jogos) {
-      await pool.query(
-        `INSERT INTO base_jogos (casa, visitante, placar_casa, placar_visitante, prob_casa, prob_empate, prob_fora) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          jogo['Casa'] || '', 
-          jogo['Visitante'] || '', 
-          parseInt(jogo['Placar Casa']) || 0, 
-          parseInt(jogo['Placar Visitante']) || 0, 
-          parseFloat(jogo['Prob, Casa (1)']) || 0, 
-          parseFloat(jogo['Prob, Empate (X)']) || 0, 
-          parseFloat(jogo['Prob, Fora (2)']) || 0
-        ]
-      );
+      // Pula linhas que não tenham os dados básicos
+      if (!jogo['Casa'] || !jogo['Visitante']) continue;
+
+      // Tratamento para converter vírgulas em pontos e garantir que sejam números
+      const limparNum = (val) => {
+          if (typeof val === 'string') return parseFloat(val.replace(',', '.')) || 0;
+          return parseFloat(val) || 0;
+      };
+
+      const valores = [
+        String(jogo['Casa']).trim(),
+        String(jogo['Visitante']).trim(),
+        parseInt(jogo['Placar Casa']) || 0,
+        parseInt(jogo['Placar Visitante']) || 0,
+        limparNum(jogo['Prob, Casa (1)']),
+        limparNum(jogo['Prob, Empate (X)']),
+        limparNum(jogo['Prob, Fora (2)'])
+      ];
+
+      await pool.query(queryText, valores);
     }
     res.json({ msg: "🚀 Base importada com sucesso!" });
   } catch (err) { 
-    console.error(err);
-    res.status(500).json({ erro: "Erro ao salvar no banco. Verifique as colunas do Excel." }); 
+    console.error("Erro SQL Detalhado:", err.message);
+    res.status(500).json({ erro: "Erro ao salvar no banco. Verifique se o Excel segue o padrão das colunas." }); 
   }
 });
 
