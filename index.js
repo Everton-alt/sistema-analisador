@@ -44,7 +44,7 @@ app.post('/webhook-pagamento', async (req, res) => {
     res.status(200).send('OK');
 });
 
-// --- ROTA: ADICIONAR USUÁRIO MANUAL (Painel ADM) ---
+// --- ROTA: ADICIONAR OU ATUALIZAR USUÁRIO MANUAL (Painel ADM) ---
 app.post('/adicionar-usuario', async (req, res) => {
     const { email, senha, dias } = req.body;
 
@@ -72,7 +72,31 @@ app.post('/adicionar-usuario', async (req, res) => {
     }
 });
 
-// 1. ROTA DE VALIDAÇÃO (LOGIN)
+// --- ROTA: EXCLUIR USUÁRIO (Painel ADM) ---
+app.post('/excluir-usuario', async (req, res) => {
+    const { email, senha } = req.body;
+
+    if (senha !== CHAVE_ADM) {
+        return res.status(401).json({ erro: "Senha ADM incorreta" });
+    }
+
+    if (!email) return res.status(400).json({ erro: "E-mail necessário para exclusão" });
+
+    try {
+        const result = await pool.query('DELETE FROM usuarios WHERE LOWER(email) = LOWER($1)', [email.trim()]);
+        
+        if (result.rowCount > 0) {
+            res.json({ msg: `❌ Usuário ${email} removido com sucesso!` });
+        } else {
+            res.status(404).json({ erro: "Usuário não encontrado na base de dados." });
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ erro: "Erro ao excluir usuário do banco." });
+    }
+});
+
+// --- ROTA DE VALIDAÇÃO (LOGIN NO FRONTEND) ---
 app.post('/validar', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ autorizado: false, msg: "E-mail obrigatório" });
@@ -101,7 +125,7 @@ app.post('/validar', async (req, res) => {
   }
 });
 
-// 2. ROTA PARA BUSCAR A BASE DE JOGOS
+// --- ROTA PARA O FRONTEND BUSCAR A BASE DE JOGOS ---
 app.get('/obter-base', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM base_jogos ORDER BY id DESC');
@@ -109,7 +133,7 @@ app.get('/obter-base', async (req, res) => {
   } catch (err) { res.status(500).json({ erro: "Erro ao buscar base" }); }
 });
 
-// 3. ROTA PARA IMPORTAR EXCEL
+// --- ROTA PARA IMPORTAR EXCEL (COM SENHA ADM) ---
 app.post('/importar-base', async (req, res) => {
   const { jogos, senha } = req.body;
   
