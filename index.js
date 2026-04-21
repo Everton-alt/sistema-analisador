@@ -6,20 +6,51 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Configuração do Banco de Dados
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// CHAVE DE SEGURANÇA ADM
 const CHAVE_ADM = 'Everton2026';
+
+// --- NOVA ROTA: WEBHOOK DO ASAAS ---
+// Esta rota recebe o aviso de pagamento e cadastra o usuário sozinho!
+app.post('/webhook-pagamento', async (req, res) => {
+    const { event, payment } = req.body;
+
+    // Verifica se o evento é de pagamento confirmado
+    if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED' || event === 'PAYMENT_SETTLED') {
+        const emailCliente = payment.customerEmail ? payment.customerEmail.toLowerCase().trim() : null;
+        
+        if (emailCliente) {
+            try {
+                // Define data de vencimento para 31 dias a partir de hoje
+                const dataVencimento = new Date();
+                dataVencimento.setDate(dataVencimento.getDate() + 31);
+
+                // Insere ou atualiza o usuário no banco de dados
+                await pool.query(
+                    `INSERT INTO usuarios (email, status_assinatura, data_vencimento) 
+                     VALUES ($1, $2, $3) 
+                     ON CONFLICT (email) 
+                     DO UPDATE SET status_assinatura = $2, data_vencimento = $3`,
+                    [emailCliente, 'ativo', dataVencimento]
+                );
+                console.log(`✅ Acesso liberado automaticamente: ${emailCliente}`);
+            } catch (err) {
+                console.error("❌ Erro ao processar webhook:", err);
+            }
+        }
+    }
+    // O Asaas exige que você responda 200 OK
+    res.status(200).send('OK');
+});
 
 // 1. ROTA DE VALIDAÇÃO (LOGIN)
 app.post('/validar', async (req, res) => {
   const { email } = req.body;
   try {
-    const result = await pool.query('SELECT * FROM usuarios WHERE LOWER(email) = LOWER($1)', [email]);
+    const result = await pool.query('SELECT * FROM usuarios WHERE LOWER(email) = LOWER($1)', [email.trim()]);
     if (result.rows.length === 0) return res.status(404).json({ autorizado: false, msg: "E-mail não cadastrado" });
 
     const user = result.rows[0];
@@ -57,8 +88,8 @@ app.post('/importar-base', async (req, res) => {
         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           jogo['Casa'] || '', jogo['Visitante'] || '', 
-          parseInt(jogo['Placar Casa']) || 0, parseInt(jogo['Placar Visitante']) || 0, 
-          parseFloat(jogo['Prob, Casa (1)']) || 0, parseFloat(jogo['Prob, Empate (X)']) || 0, parseFloat(jogo['Prob, Fora (2)']) || 0
+          parseInt(j['Placar Casa']) || 0, parseInt(j['Placar Visitante']) || 0, 
+          parseFloat(j['Prob, Casa (1)']) || 0, parseFloat(j['Prob, Empate (X)']) || 0, parseFloat(j['Prob, Fora (2)']) || 0
         ]
       );
     }
