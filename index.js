@@ -12,28 +12,22 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// CHAVE DE SEGURANÇA ADM (Para importar Excel e validar Webhook se necessário)
+// CHAVE DE SEGURANÇA ADM
 const CHAVE_ADM = 'Everton2026';
 
 // --- ROTA: WEBHOOK DO ASAAS ---
-// Esta rota recebe o aviso de pagamento e cadastra o usuário sozinho!
 app.post('/webhook-pagamento', async (req, res) => {
     const { event, payment } = req.body;
-
-    // Log para você monitorar no painel do Render
     console.log(`Evento recebido do Asaas: ${event}`);
 
-    // Verifica se o evento é de pagamento confirmado ou recebido
     if (event === 'PAYMENT_RECEIVED' || event === 'PAYMENT_CONFIRMED' || event === 'PAYMENT_SETTLED') {
         const emailCliente = payment.customerEmail ? payment.customerEmail.toLowerCase().trim() : null;
         
         if (emailCliente) {
             try {
-                // Define data de vencimento para 31 dias a partir de hoje
                 const dataVencimento = new Date();
                 dataVencimento.setDate(dataVencimento.getDate() + 31);
 
-                // Insere ou atualiza o usuário no banco de dados (POSTGRES)
                 await pool.query(
                     `INSERT INTO usuarios (email, status_assinatura, data_vencimento) 
                      VALUES ($1, $2, $3) 
@@ -41,18 +35,44 @@ app.post('/webhook-pagamento', async (req, res) => {
                      DO UPDATE SET status_assinatura = $2, data_vencimento = $3`,
                     [emailCliente, 'ativo', dataVencimento]
                 );
-                console.log(`✅ Acesso liberado automaticamente: ${emailCliente}`);
+                console.log(`✅ Acesso liberado automaticamente via Webhook: ${emailCliente}`);
             } catch (err) {
-                console.error("❌ Erro ao processar banco no webhook:", err);
+                console.error("❌ Erro no banco via webhook:", err);
             }
         }
     }
-    
-    // O Asaas exige sempre resposta 200 para confirmar o recebimento
     res.status(200).send('OK');
 });
 
-// 1. ROTA DE VALIDAÇÃO (LOGIN NO FRONTEND)
+// --- ROTA: ADICIONAR USUÁRIO MANUAL (Painel ADM) ---
+app.post('/adicionar-usuario', async (req, res) => {
+    const { email, senha, dias } = req.body;
+
+    if (senha !== CHAVE_ADM) {
+        return res.status(401).json({ erro: "Senha ADM incorreta" });
+    }
+
+    if (!email) return res.status(400).json({ erro: "E-mail necessário" });
+
+    try {
+        const dataVencimento = new Date();
+        dataVencimento.setDate(dataVencimento.getDate() + parseInt(dias || 31));
+
+        await pool.query(
+            `INSERT INTO usuarios (email, status_assinatura, data_vencimento) 
+             VALUES ($1, $2, $3) 
+             ON CONFLICT (email) 
+             DO UPDATE SET status_assinatura = $2, data_vencimento = $3`,
+            [email.toLowerCase().trim(), 'ativo', dataVencimento]
+        );
+        res.json({ msg: `✅ Usuário ${email} cadastrado/atualizado com sucesso!` });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ erro: "Erro ao salvar usuário no banco." });
+    }
+});
+
+// 1. ROTA DE VALIDAÇÃO (LOGIN)
 app.post('/validar', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ autorizado: false, msg: "E-mail obrigatório" });
@@ -61,7 +81,7 @@ app.post('/validar', async (req, res) => {
     const result = await pool.query('SELECT * FROM usuarios WHERE LOWER(email) = LOWER($1)', [email.trim()]);
     
     if (result.rows.length === 0) {
-        return res.status(404).json({ autorizado: false, msg: "E-mail não cadastrado ou pagamento não processado" });
+        return res.status(404).json({ autorizado: false, msg: "E-mail não cadastrado ou pagamento pendente" });
     }
 
     const user = result.rows[0];
@@ -73,7 +93,7 @@ app.post('/validar', async (req, res) => {
     if (user.status_assinatura === 'ativo' && vencimento >= hoje) {
       res.json({ autorizado: true, msg: "Acesso liberado!" });
     } else {
-      res.json({ autorizado: false, msg: "Assinatura pendente ou vencida" });
+      res.json({ autorizado: false, msg: "Assinatura vencida ou inativa" });
     }
   } catch (err) { 
     console.error(err);
@@ -81,7 +101,7 @@ app.post('/validar', async (req, res) => {
   }
 });
 
-// 2. ROTA PARA O FRONTEND BUSCAR A BASE DE JOGOS
+// 2. ROTA PARA BUSCAR A BASE DE JOGOS
 app.get('/obter-base', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM base_jogos ORDER BY id DESC');
@@ -89,7 +109,7 @@ app.get('/obter-base', async (req, res) => {
   } catch (err) { res.status(500).json({ erro: "Erro ao buscar base" }); }
 });
 
-// 3. ROTA PARA IMPORTAR EXCEL (COM SENHA ADM)
+// 3. ROTA PARA IMPORTAR EXCEL
 app.post('/importar-base', async (req, res) => {
   const { jogos, senha } = req.body;
   
@@ -98,7 +118,6 @@ app.post('/importar-base', async (req, res) => {
   }
 
   try {
-    // Limpa a base antiga antes de subir a nova
     await pool.query('DELETE FROM base_jogos');
     
     for (const jogo of jogos) {
@@ -116,13 +135,12 @@ app.post('/importar-base', async (req, res) => {
         ]
       );
     }
-    res.json({ msg: "Base atualizada com sucesso no banco de dados!" });
+    res.json({ msg: "🚀 Base importada com sucesso!" });
   } catch (err) { 
     console.error(err);
     res.status(500).json({ erro: "Erro ao salvar no banco. Verifique as colunas do Excel." }); 
   }
 });
 
-// Inicialização do Servidor
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Analista Pro girando na porta ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Analista Pro online na porta ${PORT}`));
