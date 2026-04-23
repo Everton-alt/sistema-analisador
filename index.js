@@ -5,9 +5,7 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-// --- CONFIGURAÇÃO DE SEGURANÇA (RATE LIMIT) ---
-
-// Limitador Geral: 100 requisições a cada 15 minutos por IP
+// --- CONFIGURAÇÃO DE SEGURANÇA ---
 const limiterGeral = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -16,25 +14,71 @@ const limiterGeral = rateLimit({
   legacyHeaders: false,
 });
 
-// Limitador de Força Bruta (ADM): Apenas 5 tentativas por hora para rotas sensíveis
 const limiterADM = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 5,
+  max: 20, // Aumentei um pouco para facilitar seus testes iniciais
   message: { erro: "Bloqueio de segurança: Muitas tentativas de acesso administrativo." }
 });
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-app.use(limiterGeral); // Aplica o limite geral em todas as rotas
+app.use(limiterGeral);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// Chaves do Cofre do Render
 const CHAVE_ADM = process.env.SENHA_ADM;
 const EMAIL_MESTRE = process.env.EMAIL_ADM ? process.env.EMAIL_ADM.toLowerCase().trim() : "";
+
+// --- ROTAS DA VITRINE (POSTGRESQL) ---
+
+// 1. Obter palpites (Público)
+app.get('/obter-vitrine', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM vitrine ORDER BY data DESC, hora ASC');
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ erro: "Erro ao buscar vitrine" });
+  }
+});
+
+// 2. Salvar novo palpite (ADM)
+app.post('/salvar-palpite', async (req, res) => {
+  const { confronto, hora, palpite, odd, data, status } = req.body;
+  try {
+    await pool.query(
+      'INSERT INTO vitrine (confronto, hora, palpite, odd, data, status) VALUES ($1, $2, $3, $4, $5, $6)',
+      [confronto, hora, palpite, odd, data, status || 'ANDAMENTO']
+    );
+    res.json({ msg: "✅ Palpite adicionado!" });
+  } catch (err) {
+    res.status(500).json({ erro: "Erro ao salvar palpite" });
+  }
+});
+
+// 3. Atualizar Status (ADM)
+app.put('/atualizar-palpite', async (req, res) => {
+  const { id, status } = req.body;
+  try {
+    await pool.query('UPDATE vitrine SET status = $1 WHERE id = $2', [status, id]);
+    res.json({ msg: "✅ Status atualizado!" });
+  } catch (err) {
+    res.status(500).json({ erro: "Erro ao atualizar" });
+  }
+});
+
+// 4. Deletar Palpite (ADM)
+app.delete('/deletar-palpite', async (req, res) => {
+  const { id } = req.body;
+  try {
+    await pool.query('DELETE FROM vitrine WHERE id = $1', [id]);
+    res.json({ msg: "✅ Palpite removido!" });
+  } catch (err) {
+    res.status(500).json({ erro: "Erro ao deletar" });
+  }
+});
 
 // --- ROTA DE VALIDAÇÃO DE LOGIN ---
 app.post('/validar', async (req, res) => {
@@ -51,7 +95,6 @@ app.post('/validar', async (req, res) => {
     const vencimento = new Date(user.data_vencimento);
 
     if (user.status_assinatura === 'ativo' && vencimento >= hoje) {
-      // O servidor valida se é o e-mail mestre configurado no Render
       const isAdmin = (emailLimpo === EMAIL_MESTRE);
       res.json({ autorizado: true, is_admin: isAdmin, msg: "Acesso liberado!" });
     } else {
@@ -60,7 +103,7 @@ app.post('/validar', async (req, res) => {
   } catch (err) { res.status(500).json({ erro: "Erro interno" }); }
 });
 
-// --- ROTA ADMINISTRATIVA: ADICIONAR USUÁRIO (PROTEGIDA) ---
+// --- ROTA ADMINISTRATIVA: ADICIONAR USUÁRIO ---
 app.post('/adicionar-usuario', limiterADM, async (req, res) => {
     const { email, senha, dias } = req.body;
     if (senha !== CHAVE_ADM) return res.status(401).json({ erro: "Senha ADM incorreta" });
@@ -77,7 +120,7 @@ app.post('/adicionar-usuario', limiterADM, async (req, res) => {
     } catch (err) { res.status(500).json({ erro: "Erro ao salvar usuário." }); }
 });
 
-// --- ROTA ADMINISTRATIVA: IMPORTAR EXCEL (PROTEGIDA) ---
+// --- ROTA ADMINISTRATIVA: IMPORTAR EXCEL ---
 app.post('/importar-base', limiterADM, async (req, res) => {
   const { jogos, senha } = req.body;
   if (senha !== CHAVE_ADM) return res.status(401).json({ erro: "Senha ADM incorreta" });
@@ -104,7 +147,6 @@ app.post('/importar-base', limiterADM, async (req, res) => {
   } catch (err) { res.status(500).json({ erro: "Erro na importação." }); }
 });
 
-// --- ROTA PÚBLICA: OBTER DADOS PARA ANÁLISE ---
 app.get('/obter-base', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM base_jogos ORDER BY id DESC');
