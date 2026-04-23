@@ -3,7 +3,9 @@ const { Pool } = require('pg');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+
+// Configuração de segurança: Permite acesso ao seu sistema
+app.use(cors()); 
 app.use(express.json({ limit: '50mb' }));
 
 const pool = new Pool({
@@ -11,7 +13,8 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-const CHAVE_ADM = 'Everton2026';
+// --- SEGURANÇA: Senha lida das Variáveis de Ambiente do Render ---
+const CHAVE_ADM = process.env.SENHA_ADM;
 
 // --- ROTA: WEBHOOK DO ASAAS ---
 app.post('/webhook-pagamento', async (req, res) => {
@@ -49,6 +52,8 @@ app.post('/webhook-pagamento', async (req, res) => {
 // --- ROTA: ADICIONAR/ATUALIZAR MANUAL ---
 app.post('/adicionar-usuario', async (req, res) => {
     const { email, senha, dias } = req.body;
+    
+    // Validação segura contra a variável do Render
     if (senha !== CHAVE_ADM) return res.status(401).json({ erro: "Senha ADM incorreta" });
     if (!email) return res.status(400).json({ erro: "E-mail necessário" });
 
@@ -93,9 +98,11 @@ app.get('/obter-base', async (req, res) => {
   } catch (err) { res.status(500).json({ erro: "Erro ao buscar base" }); }
 });
 
-// --- ROTA IMPORTAR EXCEL (CORRIGIDA) ---
+// --- ROTA IMPORTAR EXCEL ---
 app.post('/importar-base', async (req, res) => {
   const { jogos, senha } = req.body;
+  
+  // Validação segura contra a variável do Render
   if (senha !== CHAVE_ADM) return res.status(401).json({ erro: "Senha ADM incorreta" });
 
   try {
@@ -111,9 +118,7 @@ app.post('/importar-base', async (req, res) => {
         return parseFloat(val) || 0;
     };
 
-    // Processa os jogos
     for (const jogo of jogos) {
-      // AJUSTE DOS NOMES DAS COLUNAS CONFORME SUA PLANILHA
       const nomeCasa = jogo['Equipe Casa'] || jogo['Casa'];
       const nomeVisitante = jogo['Equipe Visitante'] || jogo['Visitante'];
 
